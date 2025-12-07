@@ -7,6 +7,10 @@ import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as apigwv2Authorizers from "aws-cdk-lib/aws-apigatewayv2-authorizers";
 import * as apigwv2Integrations from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as s3 from "aws-cdk-lib/aws-s3";
+import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
+import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
+import * as acm from "aws-cdk-lib/aws-certificatemanager";
 
 export class ThrowfileStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -18,6 +22,9 @@ export class ThrowfileStack extends cdk.Stack {
     // const queue = new sqs.Queue(this, 'ThrowfileQueue', {
     //   visibilityTimeout: cdk.Duration.seconds(300)
     // });
+
+    const domainName = process.env.FRONTEND_DOMAIN;
+    const certArn = process.env.ACM_CERT_ARN;
 
     // 1. DynamoDB save mapping connectionId -> channelId
     const table = new dynamodb.Table(this, "ConnectionsTable", {
@@ -101,11 +108,60 @@ export class ThrowfileStack extends cdk.Stack {
     const managementApiUrl = `https://${wsApi.apiId}.execute-api.${this.region}.amazonaws.com/${stage.stageName}`;
     handler.addEnvironment("MANAGEMENT_API_URL", managementApiUrl);
 
-    new cdk.CfnOutput(this, "WebSocketWSS_URL", {
+    // 6. S3 private bucket for react
+    const frontendBucket = new s3.Bucket(this, "OriginBucket", {
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+    });
+
+    // 7. CloudFront Distribution
+    const distribution = new cloudfront.Distribution(
+      this,
+      "Distribution",
+      {
+        domainNames: domainName ? [domainName] : undefined,
+        certificate: certArn
+          ? acm.Certificate.fromCertificateArn(this, "FrontendCert", certArn)
+          : undefined,
+        defaultBehavior: {
+          origin:
+            origins.S3BucketOrigin.withOriginAccessControl(frontendBucket),
+          viewerProtocolPolicy:
+            cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        },
+        defaultRootObject: "index.html",
+        errorResponses: [
+          {
+            httpStatus: 404,
+            responseHttpStatus: 200,
+            responsePagePath: "/index.html",
+            ttl: cdk.Duration.minutes(0),
+          },
+          {
+            httpStatus: 403,
+            responseHttpStatus: 200,
+            responsePagePath: "/index.html",
+            ttl: cdk.Duration.minutes(0),
+          },
+        ],
+      }
+    );
+
+    new cdk.CfnOutput(this, "WebSocketWSSURL", {
       value: stage.url,
     });
-    new cdk.CfnOutput(this, "WebSocketHTTPS_URL", {
+    new cdk.CfnOutput(this, "WebSocketHTTPSURL", {
       value: managementApiUrl,
+    });
+    new cdk.CfnOutput(this, "DistributionDomainName", {
+      value: distribution.distributionDomainName,
+    });
+    new cdk.CfnOutput(this, "FrontendBucketName", {
+      value: frontendBucket.bucketName,
+    });
+    new cdk.CfnOutput(this, "AlternativeDomainName", {
+      value: domainName ?? "",
     });
   }
 }

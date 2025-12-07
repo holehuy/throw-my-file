@@ -1,5 +1,5 @@
 // Home.tsx
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { generateChannel, sanitizeChannel } from "../utils/channel";
 import { useWebSocket } from "../hooks/useWebSocket";
@@ -15,15 +15,11 @@ export default function Home() {
 
   // --- UI / feature state ---
   const [channel, setChannel] = useState<string>(initialChannel);
-  const [progress, setProgress] = useState<number>(0);
-  const [receivedFile, setReceivedFile] = useState<File | null>(null);
-  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [fileProgress, setFileProgress] = useState<Record<string, number>>({});
   const [fileHistory, setFileHistory] = useState<
     { name: string; size: number; url: string }[]
   >([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [connectedUsers, setConnectedUsers] = useState<number>(1);
   const hasJoinedRef = useRef(false);
   const isInitiatorRef = useRef(false); // Theo dõi xem peer này có phải là initiator không
 
@@ -58,7 +54,6 @@ export default function Home() {
       case "peer_joined":
         // Backend gửi peer_joined thay vì relay message "join"
         console.log("✅ [Signaling] peer_joined → sending READY");
-        setConnectedUsers((prev) => prev + 1);
         showToast("Someone joined the channel!", "info");
         sendMessage({
           action: "sendMessage",
@@ -101,7 +96,6 @@ export default function Home() {
         break;
 
       case "peer_left":
-        setConnectedUsers((prev) => Math.max(prev - 1, 1));
         showToast("Someone left the channel.", "warning");
         break;
 
@@ -118,7 +112,6 @@ export default function Home() {
     init,
     createOffer,
     createAnswer,
-    setRemoteAnswer,
     addIce,
     sendFile,
     pc,
@@ -132,10 +125,8 @@ export default function Home() {
       },
       onFileReceived: (file) => {
         console.log("🎉 [Home] File received!", file.name, file.size);
-        setReceivedFile(file);
         const url = URL.createObjectURL(file);
         console.log("🔗 [Home] Download URL:", url);
-        setDownloadUrl(url);
         setFileHistory((h) => [
           { name: file.name, size: file.size, url },
           ...h,
@@ -388,23 +379,6 @@ export default function Home() {
           onCancel={onCancel}
           onConfirm={onConfirm}
         />
-
-        {/* Progress */}
-        {progress > 0 && progress < 100 && (
-          <div className="mb-3">
-            <label className="form-label">Transfer progress: {progress}%</label>
-            <div className="progress">
-              <div
-                className="progress-bar"
-                role="progressbar"
-                style={{ width: `${progress}%` }}
-                aria-valuenow={progress}
-                aria-valuemin={0}
-                aria-valuemax={100}
-              />
-            </div>
-          </div>
-        )}
 
         {/* File History */}
         <div className="border rounded p-3 bg-light mb-3">

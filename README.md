@@ -35,6 +35,8 @@ Deployment
 1. Deploy the backend (CDK) first
 
 ```bash
+export FRONTEND_DOMAIN=<example.com>
+export ACM_CERT_ARN=<acm_cert_arn>
 cdk deploy
 ```
 
@@ -66,6 +68,12 @@ VITE_WS_URL=wss://xxxxxxxx.execute-api.region.amazonaws.com/prod
 cd frontend
 npm install
 npm run dev
+```
+
+5. Deploy the frontend
+
+```bash
+sh ./deploy.sh --profile <your-profile-name>
 ```
 
 - Infrastructure is managed with AWS CDK
