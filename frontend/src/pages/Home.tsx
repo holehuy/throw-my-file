@@ -406,7 +406,7 @@ export default function Home() {
                   📁 {f.name} · {(f.size / 1024 / 1024).toFixed(2)} MB
                 </a>
                 {fileProgress[f.name] != null &&
-                  fileProgress[f.name] !== 100 && (
+                  fileProgress[f.name] <= 90 && (
                     <div className="progress mt-1">
                       <div
                         className="progress-bar"
