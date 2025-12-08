@@ -26,6 +26,9 @@ export class ThrowfileStack extends cdk.Stack {
     const domainName = process.env.FRONTEND_DOMAIN;
     const certArn = process.env.ACM_CERT_ARN;
 
+    // WebSocket custom domain configuration
+    const wsDomainName = process.env.WS_DOMAIN; // e.g., "ws.example.com"
+
     // 1. DynamoDB save mapping connectionId -> channelId
     const table = new dynamodb.Table(this, "ConnectionsTable", {
       partitionKey: {
@@ -103,53 +106,96 @@ export class ThrowfileStack extends cdk.Stack {
       autoDeploy: true,
     });
 
-    // 5. Add Environment To Lambda
-    handler.addEnvironment("WS_ENDPOINT", stage.url);
-    const managementApiUrl = `https://${wsApi.apiId}.execute-api.${this.region}.amazonaws.com/${stage.stageName}`;
+    // 5. Custom Domain for WebSocket (if configured)
+    let wsUrl = stage.url;
+    let managementApiUrl = `https://${wsApi.apiId}.execute-api.${this.region}.amazonaws.com/${stage.stageName}`;
+
+    if (wsDomainName) {
+      // Create certificate for WebSocket domain (manual DNS validation)
+      const wsCertificate = new acm.Certificate(this, "WSCertificate", {
+        domainName: wsDomainName,
+        validation: acm.CertificateValidation.fromDns(), // No hosted zone - manual validation
+      });
+
+      // Create custom domain (will wait for certificate to be validated)
+      const customDomain = new apigwv2.DomainName(this, "WebSocketCustomDomain", {
+        domainName: wsDomainName,
+        certificate: wsCertificate,
+      });
+
+      // Map API to custom domain
+      new apigwv2.ApiMapping(this, "WSApiMapping", {
+        api: wsApi,
+        domainName: customDomain,
+        stage: stage,
+      });
+
+      wsUrl = `wss://${wsDomainName}`;
+      managementApiUrl = `https://${wsDomainName}`;
+
+      new cdk.CfnOutput(this, "WSCustomDomain", {
+        value: wsDomainName,
+        description: "WebSocket custom domain name",
+      });
+
+      new cdk.CfnOutput(this, "WSCertificateArn", {
+        value: wsCertificate.certificateArn,
+        description:
+          "WebSocket certificate ARN - validate this manually in ACM console",
+      });
+
+      new cdk.CfnOutput(this, "WSRegionalDomainName", {
+        value: customDomain.regionalDomainName,
+        description:
+          "Target for DNS A/AAAA record (create this in your DNS provider)",
+      });
+
+      new cdk.CfnOutput(this, "WSRegionalHostedZoneId", {
+        value: customDomain.regionalHostedZoneId,
+        description: "Hosted Zone ID for alias record (if using Route53)",
+      });
+    }
+
+    // 6. Add Environment To Lambda
+    handler.addEnvironment("WS_ENDPOINT", wsUrl);
     handler.addEnvironment("MANAGEMENT_API_URL", managementApiUrl);
 
-    // 6. S3 private bucket for react
+    // 7. S3 private bucket for react
     const frontendBucket = new s3.Bucket(this, "OriginBucket", {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
     });
 
-    // 7. CloudFront Distribution
-    const distribution = new cloudfront.Distribution(
-      this,
-      "Distribution",
-      {
-        domainNames: domainName ? [domainName] : undefined,
-        certificate: certArn
-          ? acm.Certificate.fromCertificateArn(this, "FrontendCert", certArn)
-          : undefined,
-        defaultBehavior: {
-          origin:
-            origins.S3BucketOrigin.withOriginAccessControl(frontendBucket),
-          viewerProtocolPolicy:
-            cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+    // 8. CloudFront Distribution
+    const distribution = new cloudfront.Distribution(this, "Distribution", {
+      domainNames: domainName ? [domainName] : undefined,
+      certificate: certArn
+        ? acm.Certificate.fromCertificateArn(this, "FrontendCert", certArn)
+        : undefined,
+      defaultBehavior: {
+        origin: origins.S3BucketOrigin.withOriginAccessControl(frontendBucket),
+        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+      },
+      defaultRootObject: "index.html",
+      errorResponses: [
+        {
+          httpStatus: 404,
+          responseHttpStatus: 200,
+          responsePagePath: "/index.html",
+          ttl: cdk.Duration.minutes(0),
         },
-        defaultRootObject: "index.html",
-        errorResponses: [
-          {
-            httpStatus: 404,
-            responseHttpStatus: 200,
-            responsePagePath: "/index.html",
-            ttl: cdk.Duration.minutes(0),
-          },
-          {
-            httpStatus: 403,
-            responseHttpStatus: 200,
-            responsePagePath: "/index.html",
-            ttl: cdk.Duration.minutes(0),
-          },
-        ],
-      }
-    );
+        {
+          httpStatus: 403,
+          responseHttpStatus: 200,
+          responsePagePath: "/index.html",
+          ttl: cdk.Duration.minutes(0),
+        },
+      ],
+    });
 
     new cdk.CfnOutput(this, "WebSocketWSSURL", {
-      value: stage.url,
+      value: wsUrl,
     });
     new cdk.CfnOutput(this, "WebSocketHTTPSURL", {
       value: managementApiUrl,
